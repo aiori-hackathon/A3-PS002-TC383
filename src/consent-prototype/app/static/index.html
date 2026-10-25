@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FitLife Consent Console</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2430; --mute:#64708a; --line:#e1e5ec;
+          --ok:#1a7f4b; --bad:#b3261e; --warn:#b26a00; --accent:#2b4fd8; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:16px 24px; background:var(--ink); color:#fff; }
+  header h1 { margin:0; font-size:18px; } header p { margin:2px 0 0; color:#b8c1d4; font-size:12px; }
+  main { max-width:1100px; margin:0 auto; padding:20px; display:grid; gap:18px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  h2 { margin:0 0 10px; font-size:15px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--mute); font-weight:600; }
+  code { font:12px ui-monospace,monospace; background:#eef1f6; padding:1px 5px; border-radius:4px; }
+  select,button { font:inherit; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:#fff; }
+  button { cursor:pointer; } button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.danger { color:var(--bad); border-color:#e8b9b5; }
+  .pill { padding:2px 8px; border-radius:99px; font-size:12px; font-weight:600; }
+  .granted { background:#dff3e8; color:var(--ok); } .withdrawn { background:#fbe3e1; color:var(--bad); }
+  .stale { background:#fdeccc; color:var(--warn); } .none { background:#eceff4; color:var(--mute); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+  pre { background:#0f1623; color:#d7e0f0; padding:12px; border-radius:8px; overflow:auto; font-size:12px; margin:0; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:18px; } @media(max-width:800px){ .two{ grid-template-columns:1fr; } }
+  .deny { color:var(--bad); font-weight:600; } .allow { color:var(--ok); font-weight:600; }
+  .scroll { max-height:320px; overflow:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FitLife Consent Console</h1>
+  <p>Synthetic service &middot; purpose-based consent recording, withdrawal and real-time enforcement &middot; technical evidence only</p>
+</header>
+<main>
+  <section class="card">
+    <h2>1. User consent (what the data subject sees)</h2>
+    <div class="row">
+      <label>Synthetic user <select id="user"></select></label>
+      <button onclick="resetAll()" class="danger">Reset demo data</button>
+    </div>
+    <table>
+      <thead><tr><th>Purpose</th><th>Current notice</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody id="consents"></tbody>
+    </table>
+  </section>
+
+  <div class="two">
+    <section class="card">
+      <h2>2. Admin: publish a new notice version</h2>
+      <div class="row"><select id="np"></select><button onclick="publishNotice()">Publish new version</button></div>
+      <p style="color:var(--mute);margin:0">Publishing a new version invalidates every consent given under the old one until the user re-consents.</p>
+    </section>
+
+    <section class="card">
+      <h2>3. Downstream consumer (mock data-sharing API)</h2>
+      <div class="row">
+        <select id="consumer"></select>
+        <select id="rpurpose"></select>
+        <button class="primary" onclick="requestData()">Request data for selected user</button>
+      </div>
+      <pre id="result">Result of the API call will appear here.</pre>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>4. Audit log (hash-chained)</h2>
+    <div class="row">
+      <button onclick="verify()">Verify integrity</button>
+      <a href="/api/audit/export?format=csv"><button>Export CSV</button></a>
+      <a href="/api/audit/export?format=json"><button>Export JSON</button></a>
+      <span id="integrity"></span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>Time (UTC)</th><th>Event</th><th>User</th><th>Purpose</th><th>Notice</th><th>Actor</th><th>Detail</th></tr></thead>
+        <tbody id="audit"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let STATE = null;
+const api = async (path, opts) => {
+  const r = await fetch(path, opts);
+  let body = null; try { body = await r.json(); } catch (e) {}
+  return { status: r.status, body };
+};
+const post = (path, data, headers = {}) => api(path, { method: 'POST',
+  headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(data) });
+
+async function init() {
+  STATE = (await api('/api/state')).body;
+  $('user').innerHTML = STATE.users.map(u => `<option value="${u.user_id}">${u.user_id} - ${u.name}</option>`).join('');
+  const pOpts = STATE.purposes.map(p => `<option>${p.purpose}</option>`).join('');
+  $('np').innerHTML = pOpts; $('rpurpose').innerHTML = pOpts;
+  $('consumer').innerHTML = STATE.consumers.map(c => `<option value="${c.consumer_id}">${c.consumer_id}</option>`).join('');
+  $('user').onchange = refresh;
+  refresh();
+}
+
+async function refresh() { await Promise.all([loadConsents(), loadAudit()]); }
+
+async function loadConsents() {
+  const rows = (await api('/api/consent/' + $('user').value)).body;
+  $('consents').innerHTML = rows.map(r => {
+    const label = r.status === 'stale' ? `stale (consented v${r.consented_version})` : r.status;
+    const act = r.status === 'granted'
+      ? `<button class="danger" onclick="withdraw('${r.purpose}')">Withdraw</button>`
+      : `<button class="primary" onclick="grant('${r.purpose}','${r.current_hash}')">${r.status === 'stale' ? 'Re-consent' : 'Grant'}</button>`;
+    return `<tr><td><b>${r.purpose}</b></td>
+      <td>v${r.current_version} <code>${r.current_hash.slice(0, 12)}</code><br><small>${r.notice_text}</small></td>
+      <td><span class="pill ${r.status}">${label}</span></td><td>${act}</td></tr>`;
+  }).join('');
+}
+
+async function loadAudit() {
+  const rows = (await api('/api/audit')).body;
+  $('audit').innerHTML = rows.slice().reverse().map(a => {
+    const cls = a.event === 'ACCESS_DENIED' || a.event.includes('INVALIDATED') || a.event.includes('REJECTED') ? 'deny'
+              : a.event === 'ACCESS_GRANTED' ? 'allow' : '';
+    return `<tr><td>${a.id}</td><td>${a.ts.slice(11, 23)}</td><td class="${cls}">${a.event}</td>
+      <td>${a.user_id ?? ''}</td><td>${a.purpose ?? ''}</td>
+      <td>${a.notice_version ? 'v' + a.notice_version : ''} <code>${(a.notice_hash || '').slice(0, 8)}</code></td>
+      <td>${a.actor}</td><td>${a.detail || ''}</td></tr>`;
+  }).join('');
+}
+
+async function grant(purpose, hash) {
+  const r = await post('/api/consent/grant', { user_id: $('user').value, purpose, notice_hash: hash });
+  if (r.status !== 200) alert(JSON.stringify(r.body)); refresh();
+}
+async function withdraw(purpose) {
+  const r = await post('/api/consent/withdraw', { user_id: $('user').value, purpose });
+  if (r.status !== 200) alert(JSON.stringify(r.body)); refresh();
+}
+async function publishNotice() {
+  const purpose = $('np').value;
+  const cur = (await api('/api/consent/' + $('user').value)).body.find(x => x.purpose === purpose);
+  const text = `FitLife notice v${cur.current_version + 1}: updated terms for ${purpose} (new recipients / retention period). Please review and re-consent.`;
+  await post('/api/notices', { purpose, text }); refresh();
+}
+async function requestData() {
+  const consumer_id = $('consumer').value;
+  const key = STATE.consumers.find(c => c.consumer_id === consumer_id).demo_key;
+  const r = await post('/api/share/request',
+    { consumer_id, user_id: $('user').value, purpose: $('rpurpose').value }, { 'X-API-Key': key });
+  $('result').textContent = `HTTP ${r.status}\n` + JSON.stringify(r.body, null, 2);
+  loadAudit();
+}
+async function verify() {
+  const v = (await api('/api/audit/verify')).body;
+  $('integrity').innerHTML = v.valid
+    ? `<span class="allow">Chain valid (${v.entries} entries)</span>`
+    : `<span class="deny">TAMPERING DETECTED at entry #${v.first_bad_entry_id}</span>`;
+}
+async function resetAll() { await post('/api/reset', {}); $('result').textContent = 'Reset done.'; $('integrity').textContent = ''; refresh(); }
+
+init();
+</script>
+</body>
+</html>

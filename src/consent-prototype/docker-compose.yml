@@ -1,0 +1,26 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      CONSENT_DB: /data/consent.db
+    volumes:
+      - consent-data:/data
+    restart: unless-stopped
+
+  tests:
+    build: .
+    profiles: ["tools"]
+    command: ["python", "-m", "pytest", "-v", "-p", "no:cacheprovider"]
+
+  demo:
+    build: .
+    profiles: ["tools"]
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["python", "demo.py", "http://api:8000"]
+
+volumes:
+  consent-data:
