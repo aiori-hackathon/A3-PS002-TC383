@@ -1,25 +1,42 @@
+# Local run:  docker compose up --build      then open http://localhost:8000
+# Values have local defaults; copy .env.example to .env to override them.
+x-env: &env
+  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-internal-service-token}
+  KEY_ANALYTICS_CO: ${KEY_ANALYTICS_CO:-key-analytics-001}
+  KEY_MAILER_CO: ${KEY_MAILER_CO:-key-mailer-002}
+  KEY_RESEARCH_LAB: ${KEY_RESEARCH_LAB:-key-research-003}
+  CONSOLE_PASSWORD: ${CONSOLE_PASSWORD:-}
+  ENABLE_DOCS: ${ENABLE_DOCS:-1}
+
 services:
   api:
     build: .
     ports:
       - "8000:8000"
     environment:
+      <<: *env
       CONSENT_DB: /data/consent.db
+      LOG_DIR: /data/logs
     volumes:
-      - consent-data:/data
+      - consent-data:/data      # named volume (not a Windows bind mount): reliable SQLite locking
     restart: unless-stopped
 
-  tests:
+  tests:                         # docker compose --profile tools run --rm tests
     build: .
     profiles: ["tools"]
+    environment:
+      <<: *env
+      CONSOLE_PASSWORD: ""
     command: ["python", "-m", "pytest", "-v", "-p", "no:cacheprovider"]
 
-  demo:
+  demo:                          # docker compose --profile tools run --rm demo
     build: .
     profiles: ["tools"]
     depends_on:
       api:
         condition: service_healthy
+    environment:
+      <<: *env
     command: ["python", "demo.py", "http://api:8000"]
 
 volumes:
