@@ -1,0 +1,27 @@
+# Render Blueprint: New > Blueprint > pick this repository.
+# Render builds the Dockerfile, provides HTTPS and sets $PORT. Secrets below are generated for you.
+services:
+  - type: web
+    name: consent-prototype
+    runtime: docker
+    plan: free              # NOTE: the free plan has no persistent disk, so the database (and the ledger)
+                            # resets whenever the service restarts or redeploys. See README, "Deploy on Render".
+    healthCheckPath: /api/health
+    envVars:
+      - key: INTERNAL_SERVICE_TOKEN
+        generateValue: true
+      - key: KEY_ANALYTICS_CO      # API keys of the seeded organizations (read them in the Render dashboard)
+        generateValue: true
+      - key: KEY_MAILER_CO
+        generateValue: true
+      - key: KEY_RESEARCH_LAB
+        generateValue: true
+      - key: ENABLE_DOCS           # no public Swagger UI / OpenAPI on a public URL
+        value: "0"
+      - key: CONSOLE_PASSWORD      # generated: the web console is locked by default. Read it in the dashboard
+        generateValue: true        # and share it with the evaluators (delete this variable to make the console public)
+    # To keep the ledger across restarts, use a paid plan and add a disk, then uncomment:
+    # disk:
+    #   name: consent-data
+    #   mountPath: /data
+    #   sizeGB: 1
